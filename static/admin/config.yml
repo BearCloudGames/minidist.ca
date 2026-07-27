@@ -2,7 +2,7 @@ backend:
   name: github
   repo: BearCloudGames/minidist.ca
   branch: main
-  base_url: https://sveltia-cms-auth.YOUR-SUBDOMAIN.workers.dev
+  base_url: https://sveltia-cms-auth.dan-af6.workers.dev
 
 media_folder: static/uploads
 public_folder: /uploads
