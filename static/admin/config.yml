@@ -23,3 +23,10 @@ collections:
       - { name: description, label: Description, widget: text,   required: false }
       - { name: tags,        label: Tags,        widget: list,   required: false }
       - { name: body,        label: Body,        widget: markdown }
+  - name: date
+    label: Date
+    widget: datetime
+    format: "YYYY-MM-DDTHH:mm:ssZ"
+    date_format: "YYYY-MM-DD"
+    time_format: "HH:mm"
+    required: true
