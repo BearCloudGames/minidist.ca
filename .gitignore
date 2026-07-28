@@ -1,0 +1,5 @@
+.env
+volumes/
+apps/*/dist/
+apps/*/node_modules/
+apps/*/.astro/

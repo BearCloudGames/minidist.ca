@@ -1,4 +1,0 @@
-baseURL = 'https://minidist.ca/'
-locale = 'en-us'
-title = 'My New Hugo Project'
-theme = "PaperMod"
