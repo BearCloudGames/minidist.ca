@@ -1,0 +1,148 @@
+# minidist self-hosted stack
+#
+# Design notes:
+#  - Every port binds to 127.0.0.1 only. Your existing host nginx is the
+#    single public entrypoint; nothing here should be reachable directly.
+#  - Two database engines, unavoidably: BookStack is MySQL/MariaDB-only,
+#    and you want Postgres for the engine. They're separate containers on
+#    separate networks so neither can see the other.
+#  - The landing site isn't here. Astro compiles to static files that nginx
+#    serves off disk — no container, no process, nothing to restart.
+#
+# First run: see SETUP.md. You must generate WIKI_APP_KEY before this
+# will start, or BookStack halts on boot with "application key is missing".
+
+name: minidist
+
+services:
+  # ---------------------------------------------------------------
+  # Wiki — wiki.minidist.ca
+  # ---------------------------------------------------------------
+  wiki-db:
+    image: mariadb:11
+    container_name: minidist-wiki-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${WIKI_DB_ROOT_PASSWORD:?set in .env}
+      MARIADB_DATABASE: bookstack
+      MARIADB_USER: bookstack
+      MARIADB_PASSWORD: ${WIKI_DB_PASSWORD:?set in .env}
+    volumes:
+      - wiki-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - wiki-net
+
+  wiki:
+    # Pinned deliberately. BookStack ships roughly monthly and occasionally
+    # needs a manual migration step, so you want to read release notes
+    # before moving rather than have :latest move under you on a restart.
+    image: lscr.io/linuxserver/bookstack:25.05.2
+    container_name: minidist-wiki
+    restart: unless-stopped
+    depends_on:
+      wiki-db:
+        condition: service_healthy
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: America/Toronto
+      APP_DEFAULT_DARK_MODE: "true"
+      # Must be the full public URL including scheme. BookStack builds
+      # absolute links from this; get it wrong and you'll get redirect
+      # loops or assets loading over http on an https page.
+      APP_URL: https://wiki.minidist.ca
+
+      # Generate this first — see SETUP.md step 2.
+      APP_KEY: ${WIKI_APP_KEY:?run the appkey command, see SETUP.md}
+
+      # Trust the host nginx to report the real scheme and client IP.
+      # Scoped to the Docker bridge range rather than "*" so a
+      # misconfiguration can't let an arbitrary client spoof headers.
+      APP_PROXIES: 172.16.0.0/12
+
+      # NB: this image wants DB_USERNAME / DB_PASSWORD.
+      # Half the guides online say DB_USER / DB_PASS, which silently
+      # fails with an access-denied error that looks like a bad password.
+      DB_HOST: wiki-db
+      DB_PORT: 3306
+      DB_USERNAME: bookstack
+      DB_PASSWORD: ${WIKI_DB_PASSWORD:?set in .env}
+      DB_DATABASE: bookstack
+
+      # Moves email and webhooks off the request cycle.
+      QUEUE_CONNECTION: database
+    volumes:
+      # Bind mount rather than a named volume: this holds your uploaded
+      # images and page attachments, and you want it somewhere obvious
+      # when you write the backup script.
+      - ./volumes/wiki-config:/config
+    ports:
+      - "127.0.0.1:6875:80"
+    networks:
+      - wiki-net
+
+  # ---------------------------------------------------------------
+  # Engine — engine.minidist.ca
+  # ---------------------------------------------------------------
+  # Postgres comes up now even though the app doesn't exist yet, so you
+  # can start designing the card schema against a real database today.
+  engine-db:
+    image: postgres:17-alpine
+    container_name: minidist-engine-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: engine
+      POSTGRES_USER: engine
+      POSTGRES_PASSWORD: ${ENGINE_DB_PASSWORD:?set in .env}
+      # Slightly faster and avoids locale surprises in card-name sorting.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - engine-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engine -d engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Exposed on localhost so you can point a GUI client or run
+      # migrations from the host. Drop this line once you don't need it.
+      - "127.0.0.1:5432:5432"
+    networks:
+      - engine-net
+
+  # Uncomment when the engine app exists. Kept under a profile so
+  # `docker compose up -d` doesn't fail on a missing build context.
+  # engine:
+  #   build:
+  #     context: ./apps/engine
+  #   container_name: minidist-engine
+  #   restart: unless-stopped
+  #   profiles: [engine]
+  #   depends_on:
+  #     engine-db:
+  #       condition: service_healthy
+  #   environment:
+  #     NODE_ENV: production
+  #     DATABASE_URL: postgres://engine:${ENGINE_DB_PASSWORD}@engine-db:5432/engine
+  #     # Scope the session cookie to the parent domain now, even if you
+  #     # don't have auth yet. Retrofitting this later means invalidating
+  #     # every existing session.
+  #     COOKIE_DOMAIN: .minidist.ca
+  #   ports:
+  #     - "127.0.0.1:3000:3000"
+  #   networks:
+  #     - engine-net
+
+networks:
+  wiki-net:
+  engine-net:
+
+volumes:
+  wiki-db-data:
+  engine-db-data:
